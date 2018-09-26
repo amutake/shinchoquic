@@ -1,0 +1,10 @@
+[package]
+name = "rust-test"
+version = "0.1.0"
+authors = ["shohei_yasutake"]
+
+[dependencies]
+hex-literal = "0.1.1"
+ring = "0.13.2"
+rust-crypto = "0.2.36"
+aes-ctr = "0.1.0"
