@@ -10,6 +10,7 @@ rust-crypto = "0.2.36"
 aes-ctr = "0.1.0"
 rand = "0.5.5"
 webpki = "0.18.1"
+webpki-roots = "0.15.0"
 
 [dependencies.rustls]
 git = "git://github.com/amutake/rustls.git"
