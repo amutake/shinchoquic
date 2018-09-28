@@ -117,7 +117,7 @@ fn decode_variable_length_integer(v: &[u8]) -> (u64, usize) {
     }
 }
 
-pub fn decode_print(sender: Side, packet: &[u8]) {
+pub fn decode_print(sender: Side, packet: &[u8]) -> Vec<u8> {
     println!("========= sender: {:?} ========", sender);
     print_hex("original", &packet);
     println!("========= sender: {:?} ========", sender);
@@ -171,11 +171,12 @@ pub fn decode_print(sender: Side, packet: &[u8]) {
                     // Payload
                     let mut ad = packet[..offset].to_vec();
                     ad.extend_from_slice(&pn);
-                    let mut payload = packet[offset + amt..].to_vec();
+                    let mut payload = packet[offset + amt..offset + length as usize].to_vec();
                     let mut payload = payload.as_mut_slice();
                     let payload =
                         decrypt_pp_payload(&client_pp_key, &client_pp_iv, &pn, &ad, &mut payload);
                     print_hex("Payload", &payload);
+                    payload.to_vec()
                 }
                 Side::Server => {
                     let server_pp_pn = hex!("49eb3707f0dfb919df2cafdf2c7f712f");
@@ -191,11 +192,16 @@ pub fn decode_print(sender: Side, packet: &[u8]) {
                     // Payload
                     let mut ad = packet[..offset].to_vec();
                     ad.extend_from_slice(&pn);
-                    let mut payload = packet[offset + amt..].to_vec();
+                    let mut payload = packet[offset + amt..offset + length as usize].to_vec();
+                    print_hex(
+                        "next packet",
+                        &packet[offset + length as usize..offset + length as usize + 32],
+                    );
                     let mut payload = payload.as_mut_slice();
                     let payload =
                         decrypt_pp_payload(&server_pp_key, &server_pp_iv, &pn, &ad, &mut payload);
                     print_hex("Payload", &payload);
+                    payload.to_vec()
                 }
             }
         } else if packet[0] & 0b0111_1111 == 0x7d {
@@ -245,6 +251,7 @@ pub fn decode_print(sender: Side, packet: &[u8]) {
                     let payload =
                         decrypt_hs_payload(&client_hs_key, &client_hs_iv, &pn, &ad, &mut payload);
                     print_hex("Payload", &payload);
+                    payload.to_vec()
                 }
                 Side::Server => {
                     let server_hs_key =
@@ -267,10 +274,11 @@ pub fn decode_print(sender: Side, packet: &[u8]) {
                     let payload =
                         decrypt_hs_payload(&server_hs_key, &server_hs_iv, &pn, &ad, &mut payload);
                     print_hex("Payload", &payload);
+                    payload.to_vec()
                 }
             }
         } else {
-            println!("packet type not supported");
+            panic!("packet type not supported");
         }
     } else {
         // short header
@@ -319,6 +327,7 @@ pub fn decode_print(sender: Side, packet: &[u8]) {
                 let payload =
                     decrypt_hs_payload(&client_ap_key, &client_ap_iv, &pn, &ad, &mut payload);
                 print_hex("Payload", &payload);
+                payload.to_vec()
             }
             Side::Server => {
                 // Dst Conn ID (17)
@@ -346,10 +355,10 @@ pub fn decode_print(sender: Side, packet: &[u8]) {
                 let payload =
                     decrypt_hs_payload(&server_ap_key, &server_ap_iv, &pn, &ad, &mut payload);
                 print_hex("Payload", &payload);
+                payload.to_vec()
             }
         }
     }
-    println!("");
 }
 
 pub fn main() {

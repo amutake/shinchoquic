@@ -259,7 +259,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "rustls"
 version = "0.13.0"
-source = "git+git://github.com/amutake/rustls.git?branch=quic-14#9ba59b3ff8a77542b12f13226985183b665c0fbe"
+source = "git+git://github.com/amutake/rustls.git?branch=quic-14#42c7de478efe489f2725b84752aa994aafcf231c"
 dependencies = [
  "base64 0.9.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
