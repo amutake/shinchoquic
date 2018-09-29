@@ -141,7 +141,9 @@ impl AckBlocks {
 			.map(|(gap, block)| {
 				VariableLengthInteger::new(*gap).size() + VariableLengthInteger::new(*block).size()
 			}).sum();
-		VariableLengthInteger::new(self.first).size() + additional_size
+		VariableLengthInteger::new(self.additional.len() as u64).size()
+			+ VariableLengthInteger::new(self.first).size()
+			+ additional_size
 	}
 }
 
@@ -431,12 +433,12 @@ impl Packet {
 				// Source Connection ID
 				offset += src_conn_id.encode(&mut buf[offset..])?;
 				// Length
-				let rest_len = packet_number.size() + payload.size_with_padding() + AUTH_TAG_LEN;
+				let rest_len = packet_number.size() + payload.size() + AUTH_TAG_LEN;
 				offset += VariableLengthInteger::new(rest_len as u64).encode(&mut buf[offset..])?;
 				// Packet Number (not encrypted)
 				let pn_size = packet_number.encode(&mut buf[offset..])?;
 				// Payload (not encrypted)
-				let payload_size = payload.encode_with_padding(&mut buf[offset + pn_size..])?;
+				let payload_size = payload.encode(&mut buf[offset + pn_size..])?;
 				// Payload Encryption
 				{
 					let aad = buf[..offset + pn_size].to_vec();

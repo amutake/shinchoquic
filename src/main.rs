@@ -254,6 +254,7 @@ fn main() {
     // FIN
     let mut crypto = vec![];
     session.write_hs(&mut crypto);
+    util::print_hex("CRYPTO", &crypto);
     let packet = packet::Packet::Handshake {
         version: 0xff00000e,
         dst_conn_id,
@@ -279,10 +280,10 @@ fn main() {
     let mut buf = [0; 1500];
     let amt = packet
         .encode(&keys, &mut buf)
-        .expect("failed to encode client initial ack packet");
+        .expect("failed to encode client handshake packet");
     let client_initial = &buf[..amt];
     util::print_hex("client handshake", &client_initial);
     socket
         .send_to(&client_initial, "127.0.0.1:4433")
-        .expect("failed to send client initial packet");
+        .expect("failed to send client handshake packet");
 }
