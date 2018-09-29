@@ -137,6 +137,7 @@ fn main() {
         },
         _ => panic!("second packet from server must be an Handshake packet"),
     };
+    util::print_hex("CRYPTO 1", &crypto);
     session.read_hs(&crypto).unwrap();
 
     assert!(buf.is_empty());
@@ -161,6 +162,7 @@ fn main() {
         },
         _ => panic!("second packet from server must be an Handshake packet"),
     };
+    util::print_hex("CRYPTO 2", &crypto);
     session.read_hs(&crypto).unwrap();
 
     // server handshake 3
@@ -187,6 +189,7 @@ fn main() {
         },
         _ => panic!("second packet from server must be an Handshake packet"),
     };
+    util::print_hex("CRYPTO 3", &crypto);
     session.read_hs(&crypto).unwrap();
 
     // server handshake 4
@@ -213,6 +216,7 @@ fn main() {
         },
         _ => panic!("second packet from server must be an Handshake packet"),
     };
+    util::print_hex("CRYPTO 4", &crypto);
     session.read_hs(&crypto).unwrap();
 
     // HANDSHAKE FINISHED
@@ -271,7 +275,7 @@ fn main() {
                     },
                 },
                 packet::Frame::Crypto {
-                    offset: crypto_offset as u64,
+                    offset: 0, // encryption level が変わると offset が 0 になる！
                     payload: crypto,
                 },
             ],
