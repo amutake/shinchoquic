@@ -247,6 +247,7 @@ dependencies = [
  "ring 0.13.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rust-crypto 0.2.36 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustls 0.13.0 (git+git://github.com/amutake/rustls.git?branch=quic-14)",
+ "untrusted 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "webpki 0.18.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "webpki-roots 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

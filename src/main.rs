@@ -6,15 +6,19 @@ extern crate crypto as rust_crypto;
 extern crate rand;
 extern crate ring;
 extern crate rustls;
+extern crate untrusted;
 extern crate webpki;
 extern crate webpki_roots;
 
 use rustls::quic::{ClientQuicExt, Keys, QuicExt, Side};
 use rustls::suites::TLS13_AES_128_GCM_SHA256;
 use rustls::{ClientConfig, ClientSession, ProtocolVersion, Session, SupportedCipherSuite};
+use std::fs::File;
+use std::io::Read;
 use std::net;
 use std::sync::Arc;
-use webpki::DNSNameRef;
+use webpki::trust_anchor_util::cert_der_as_trust_anchor;
+use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots::TLS_SERVER_ROOTS;
 
 mod crypto;
@@ -29,14 +33,23 @@ use packet::*;
 fn main() {
     // quic::main();
     // ngtcp2::main();
+    let mut crt = vec![];
+    File::open("./quinn.der")
+        .expect("failed to open ./ca.crt")
+        .read_to_end(&mut crt)
+        .expect("failed to read ./ca.crt");
+
+    let root = cert_der_as_trust_anchor(untrusted::Input::from(&crt))
+        .expect("failed to read as trust anchor");
 
     let mut config = ClientConfig::new();
-    config.ciphersuites = vec![&TLS13_AES_128_GCM_SHA256];
+    config.ciphersuites = vec![&TLS13_AES_128_GCM_SHA256]; // TODO
     config.versions = vec![ProtocolVersion::TLSv1_3];
-    /* config
+    config.alpn_protocols = vec!["hq-14".into()];
+    config
         .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
- */
+        .add_server_trust_anchors(&TLSServerTrustAnchors(&[root]));
+
     let config = Arc::new(config);
     // ngtcp2 のトランスポートパラメータを引っこ抜いてきた :innocent:
     let params = hex!("ff00000e003200030002001e0000000400040000000a000400040000000b0004000400000001000400100000000200020001000800020001").to_vec();

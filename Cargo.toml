@@ -12,6 +12,7 @@ rand = "0.5.5"
 webpki = "0.18.1"
 webpki-roots = "0.15.0"
 byteorder = "1.2.6"
+untrusted = "0.6.2"
 
 [dependencies.rustls]
 git = "git://github.com/amutake/rustls.git"
