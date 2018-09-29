@@ -42,7 +42,7 @@ impl ConnectionId {
 	}
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PacketNumber(u64);
 impl PacketNumber {
 	fn new(n: u64) -> Self {
@@ -84,12 +84,24 @@ impl PacketNumberSpaces {
 		self.initial += 1;
 		PacketNumber::new(n)
 	}
+
+	pub fn next_handshake(&mut self) -> PacketNumber {
+		let n = self.handshake;
+		self.handshake += 1;
+		PacketNumber::new(n)
+	}
+
+	pub fn next_application(&mut self) -> PacketNumber {
+		let n = self.application;
+		self.application += 1;
+		PacketNumber::new(n)
+	}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AckBlocks {
-	first: u64,
-	additional: Vec<(u64, u64)>, // (gap, ack block)
+	pub first: u64,
+	pub additional: Vec<(u64, u64)>, // (gap, ack block)
 }
 
 impl AckBlocks {
@@ -356,12 +368,20 @@ impl Packet {
 				buf[offset..offset + token_len].copy_from_slice(&token);
 				offset += token_len;
 				// Length
-				let rest_len = packet_number.size() + payload.size_with_padding() + AUTH_TAG_LEN;
+				let rest_len = if packet_number == &PacketNumber(0) {
+					packet_number.size() + payload.size_with_padding() + AUTH_TAG_LEN
+				} else {
+					packet_number.size() + payload.size() + AUTH_TAG_LEN
+				};
 				offset += VariableLengthInteger::new(rest_len as u64).encode(&mut buf[offset..])?;
 				// Packet Number (not encrypted)
 				let pn_size = packet_number.encode(&mut buf[offset..])?;
 				// Payload (not encrypted)
-				let payload_size = payload.encode_with_padding(&mut buf[offset + pn_size..])?;
+				let payload_size = if packet_number == &PacketNumber(0) {
+					payload.encode_with_padding(&mut buf[offset + pn_size..])?
+				} else {
+					payload.encode(&mut buf[offset + pn_size..])?
+				};
 				// Payload Encryption
 				{
 					let aad = buf[..offset + pn_size].to_vec();
@@ -398,7 +418,7 @@ impl Packet {
 				let keys = keys.handshake.as_ref().ok_or(Error::NoKeyError)?;
 				let mut offset = 0;
 				// Packet Type
-				buf[0] = 0xff; // long header & initial packet
+				buf[0] = 0xfd; // long header & handshake packet
 				offset += 1;
 				// Version
 				NetworkEndian::write_u32(&mut buf[offset..], *version);

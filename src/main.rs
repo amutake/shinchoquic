@@ -67,10 +67,11 @@ fn main() {
 
     let mut crypto = vec![];
     session.write_hs(&mut crypto);
+    let crypto_offset = crypto.len();
     let packet = packet::Packet::Initial {
         version: 0xff00000e,
         dst_conn_id,
-        src_conn_id,
+        src_conn_id: src_conn_id.clone(), // TODO
         token: vec![],
         packet_number: pn_spaces.next_initial(),
         payload: packet::Payload {
@@ -110,6 +111,11 @@ fn main() {
         },
         _ => panic!("first packet from server must be an Initial packet"),
     };
+    let dst_conn_id = match server_initial {
+        packet::Packet::Initial { src_conn_id, .. } => src_conn_id,
+        _ => panic!("first packet from server must be an Initial packet"),
+    };
+
     session.read_hs(&crypto).unwrap();
     match session.get_handshake_keys() {
         Some(handshake_keys) => {
@@ -135,7 +141,7 @@ fn main() {
 
     assert!(buf.is_empty());
 
-    // recv server handshake
+    // recv server handshake 2
     let mut buf = [0; 1500];
     let (amt, _) = socket
         .recv_from(&mut buf)
@@ -157,11 +163,126 @@ fn main() {
     };
     session.read_hs(&crypto).unwrap();
 
-    // crypto
+    // server handshake 3
+    if buf.is_empty() {
+        println!("EmPTYTYTY");
+    }
+
+    let mut buf = [0; 1500];
+    let (amt, _) = socket
+        .recv_from(&mut buf)
+        .expect("failed to recv server Handshake packet");
+    let buf = &buf[..amt];
+    util::print_hex("server handshake", buf);
+
+    let (server_handshake, amt) =
+        packet::Packet::decode(&buf, &keys).expect("failed to decode server handshake packet");
+    println!("server handshake: {:?}", server_handshake);
+    let buf = &buf[amt..];
+
+    let crypto = match server_handshake {
+        packet::Packet::Handshake { ref payload, .. } => match payload.frames.get(0) {
+            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            _ => panic!("server handshake frame[0] must be a CRYPTO frame"),
+        },
+        _ => panic!("second packet from server must be an Handshake packet"),
+    };
+    session.read_hs(&crypto).unwrap();
+
+    // server handshake 4
+    if buf.is_empty() {
+        println!("EmPTYTYTY");
+    }
+
+    let mut buf = [0; 1500];
+    let (amt, _) = socket
+        .recv_from(&mut buf)
+        .expect("failed to recv server Handshake packet");
+    let buf = &buf[..amt];
+    util::print_hex("server handshake", buf);
+
+    let (server_handshake, amt) =
+        packet::Packet::decode(&buf, &keys).expect("failed to decode server handshake packet");
+    println!("server handshake: {:?}", server_handshake);
+    let buf = &buf[amt..];
+
+    let crypto = match server_handshake {
+        packet::Packet::Handshake { ref payload, .. } => match payload.frames.get(0) {
+            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            _ => panic!("server handshake frame[0] must be a CRYPTO frame"),
+        },
+        _ => panic!("second packet from server must be an Handshake packet"),
+    };
+    session.read_hs(&crypto).unwrap();
+
+    // HANDSHAKE FINISHED
+    match session.get_1rtt_keys() {
+        Some(one_rtt_keys) => {
+            keys.set_one_rtt(one_rtt_keys);
+        }
+        _ => panic!("failed to get handshake keys"),
+    }
+
+    // ACK Initial(0)
+    let packet = packet::Packet::Initial {
+        version: 0xff00000e,
+        dst_conn_id: dst_conn_id.clone(), // TODO
+        src_conn_id: src_conn_id.clone(), // TODO
+        token: vec![],
+        packet_number: pn_spaces.next_initial(),
+        payload: packet::Payload {
+            frames: vec![packet::Frame::Ack {
+                largest: 0,
+                delay: 0,
+                blocks: AckBlocks {
+                    first: 0,
+                    additional: vec![],
+                },
+            }],
+        },
+    };
+    let mut buf = [0; 1500];
+    let amt = packet
+        .encode(&keys, &mut buf)
+        .expect("failed to encode client initial ack packet");
+    let client_initial = &buf[..amt];
+    util::print_hex("client initial", &client_initial);
+    socket
+        .send_to(&client_initial, "127.0.0.1:4433")
+        .expect("failed to send client initial packet");
+
+    // FIN
     let mut crypto = vec![];
     session.write_hs(&mut crypto);
-    util::print_hex("TLS", &crypto);
-    let mut crypto = vec![];
-    session.write_hs(&mut crypto);
-    util::print_hex("TLS", &crypto);
+    let packet = packet::Packet::Handshake {
+        version: 0xff00000e,
+        dst_conn_id,
+        src_conn_id,
+        packet_number: pn_spaces.next_handshake(),
+        payload: packet::Payload {
+            frames: vec![
+                packet::Frame::Ack {
+                    largest: 3,
+                    delay: 0,
+                    blocks: AckBlocks {
+                        first: 3,
+                        additional: vec![],
+                    },
+                },
+                packet::Frame::Crypto {
+                    offset: crypto_offset as u64,
+                    payload: crypto,
+                },
+            ],
+        },
+    };
+    let mut buf = [0; 1500];
+    let amt = packet
+        .encode(&keys, &mut buf)
+        .expect("failed to encode client initial ack packet");
+    let client_initial = &buf[..amt];
+    util::print_hex("client handshake", &client_initial);
+    socket
+        .send_to(&client_initial, "127.0.0.1:4433")
+        .expect("failed to send client initial packet");
 }

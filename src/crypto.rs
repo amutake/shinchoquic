@@ -31,4 +31,8 @@ impl PhaseKeys {
 	pub fn set_handshake(&mut self, keys: Keys) {
 		self.handshake = Some(keys);
 	}
+
+	pub fn set_one_rtt(&mut self, keys: Keys) {
+		self.one_rtt = Some(keys);
+	}
 }
