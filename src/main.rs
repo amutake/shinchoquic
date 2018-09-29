@@ -43,26 +43,58 @@ fn main() {
     let hostname = DNSNameRef::try_from_ascii_str("localhost").unwrap();
     let mut session = ClientSession::new_quic(&config, hostname, params);
 
+    let socket = net::UdpSocket::bind("0.0.0.0:0").unwrap();
+
+    // send client initial
     let dst_conn_id = ConnectionId::new(hex!("f2aca972962edd0f195aa1bb9a16734be91b").to_vec());
     let src_conn_id = ConnectionId::new(hex!("d545b3713ec650dc4844f59652f737fa3a").to_vec());
 
     let mut pn_spaces = packet::PacketNumberSpaces::new();
     let keys = crypto::PhaseKeys::new(&dst_conn_id);
 
+    let mut crypto = vec![];
+    session.write_hs(&mut crypto);
     let packet = packet::Packet::Initial {
         version: 0xff00000e,
         dst_conn_id,
         src_conn_id,
         token: vec![],
         packet_number: pn_spaces.next_initial(),
-        payload: packet::Payload(vec![packet::Frame::Crypto { offset:0, payload: hex!("010001270303ec616ce0718ff6cc0beef7fd70d3e2cfa791b9d8a78ba9d4acae89e58d99e11c00000813021303130100ff010000f6ffa50038ff00000e003200030002001e0000000400040000000a000400040000000b00040004000000010004001000000002000200010008000200010000000e000c0000096c6f63616c686f7374000b000403000102000a000a00080017001d00180019002300000010000800060568712d31340016000000170000000d001e001c040305030603080708080809080a080b080408050806040105010601002b0003020304002d0002010100330047004500170041048f5a12125ccca5667935e64dd2b9923b0df1c97e3d3212dc5b4aa7b036ef0faec05aeac66fe0866d9de85fae29960d954baf81ec68e3619a0712393e14945422").to_vec() }]),
+        payload: packet::Payload {
+            frames: vec![packet::Frame::Crypto {
+                offset: 0,
+                payload: crypto,
+            }],
+        },
     };
     let mut buf = [0; 1500];
+    let amt = packet
+        .encode(&keys, &mut buf)
+        .expect("failed to encode client initial packet");
+    let client_initial = &buf[..amt];
+    util::print_hex("client initial", &client_initial);
+    socket
+        .send_to(&client_initial, "127.0.0.1:4433")
+        .expect("failed to send client initial packet");
 
-    let amt = packet.encode(&keys, &mut buf).unwrap();
+    // recv server initial
+    let mut buf = [0; 1500];
+    let (amt, _) = socket
+        .recv_from(&mut buf)
+        .expect("failed to recv server initial + handshake packet");
+    let buf = &buf[..amt];
+    util::print_hex("server initial", buf);
+    let (server_initial, amt) =
+        packet::Packet::decode(&buf, &keys).expect("failed to decode server initial packet");
+    println!("server initial: {:?}", server_initial);
+    let buf = &buf[..amt];
 
-    util::print_hex("packet", &buf[..amt]);
-
-    use ngtcp2;
-    ngtcp2::decode_print(ngtcp2::Side::Client, &buf[..amt]);
+    let crypto = match server_initial {
+        packet::Packet::Initial { ref payload, .. } => match payload.frames.get(1) {
+            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            _ => panic!("server initial frame[1] must be a crypto frame"),
+        },
+        _ => panic!("first message from server must be an initial packet"),
+    };
+    session.read_hs(&crypto).unwrap();
 }

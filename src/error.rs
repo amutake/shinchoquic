@@ -7,6 +7,7 @@ pub enum Error {
 	EncryptError,
 	DecryptError,
 	NoKeyError,
+	NotSupportedError,
 }
 
 pub type Result<T> = result::Result<T, Error>;
