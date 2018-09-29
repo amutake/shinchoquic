@@ -77,7 +77,7 @@ fn main() {
         payload: packet::Payload {
             frames: vec![packet::Frame::Crypto {
                 offset: 0,
-                payload: crypto,
+                data: crypto,
             }],
         },
     };
@@ -104,7 +104,7 @@ fn main() {
     let crypto = match server_initial {
         packet::Packet::Initial { ref payload, .. } => match payload.frames.get(1) {
             // TODO: offset もちゃんと扱う
-            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            Some(packet::Frame::Crypto { data, .. }) => data,
             _ => panic!("server initial frame[1] must be a CRYPTO frame"),
         },
         _ => panic!("first packet from server must be an Initial packet"),
@@ -130,7 +130,7 @@ fn main() {
 
     let crypto = match server_handshake {
         packet::Packet::Handshake { ref payload, .. } => match payload.frames.get(0) {
-            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            Some(packet::Frame::Crypto { data, .. }) => data,
             _ => panic!("server handshake frame[0] must be a CRYPTO frame"),
         },
         _ => panic!("second packet from server must be an Handshake packet"),
@@ -154,7 +154,7 @@ fn main() {
 
     let crypto = match server_handshake {
         packet::Packet::Handshake { ref payload, .. } => match payload.frames.get(0) {
-            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            Some(packet::Frame::Crypto { data, .. }) => data,
             _ => panic!("server handshake frame[0] must be a CRYPTO frame"),
         },
         _ => panic!("second packet from server must be an Handshake packet"),
@@ -180,7 +180,7 @@ fn main() {
 
     let crypto = match server_handshake {
         packet::Packet::Handshake { ref payload, .. } => match payload.frames.get(0) {
-            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            Some(packet::Frame::Crypto { data, .. }) => data,
             _ => panic!("server handshake frame[0] must be a CRYPTO frame"),
         },
         _ => panic!("second packet from server must be an Handshake packet"),
@@ -206,7 +206,7 @@ fn main() {
 
     let crypto = match server_handshake {
         packet::Packet::Handshake { ref payload, .. } => match payload.frames.get(0) {
-            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            Some(packet::Frame::Crypto { data, .. }) => data,
             _ => panic!("server handshake frame[0] must be a CRYPTO frame"),
         },
         _ => panic!("second packet from server must be an Handshake packet"),
@@ -272,7 +272,7 @@ fn main() {
                 },
                 packet::Frame::Crypto {
                     offset: 0, // encryption level が変わると offset が 0 になる！
-                    payload: crypto,
+                    data: crypto,
                 },
             ],
         },

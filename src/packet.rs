@@ -151,7 +151,7 @@ impl AckBlocks {
 pub enum Frame {
 	Crypto {
 		offset: u64,
-		payload: Vec<u8>,
+		data: Vec<u8>,
 	},
 	Ack {
 		largest: u64,
@@ -159,6 +159,12 @@ pub enum Frame {
 		blocks: AckBlocks,
 	},
 	Padding,
+	Stream {
+		id: u64,
+		fin: bool,
+		offset: Option<u64>,
+		data: Vec<u8>,
+	},
 }
 
 impl Frame {
@@ -182,17 +188,48 @@ impl Frame {
 					offset,
 				))
 			}
+			0x10...0x17 => {
+				let off_bit = (buf[0] & 0b0000_0100) >> 2;
+				let len_bit = (buf[0] & 0b0000_0010) >> 1;
+				let fin = (buf[0] & 0b0000_0001) == 1;
+				let (id, amt) = VariableLengthInteger::decode(&buf[offset..])?;
+				offset += amt;
+				let stream_offset = if off_bit == 1 {
+					let (n, amt) = VariableLengthInteger::decode(&buf[offset..])?;
+					offset += amt;
+					Some(n)
+				} else {
+					None
+				};
+				let length = if len_bit == 1 {
+					let (n, amt) = VariableLengthInteger::decode(&buf[offset..])?;
+					offset += amt;
+					n
+				} else {
+					buf[offset..].len() as u64
+				};
+				let data = buf[offset..offset + length as usize].to_vec();
+				Ok((
+					Frame::Stream {
+						id,
+						fin,
+						offset: stream_offset,
+						data,
+					},
+					offset + length as usize,
+				))
+			}
 			0x18 => {
 				let (crypto_offset, amt) = VariableLengthInteger::decode(&buf[offset..])?;
 				offset += amt;
-				let (payload_len, amt) = VariableLengthInteger::decode(&buf[offset..])?;
+				let (data_len, amt) = VariableLengthInteger::decode(&buf[offset..])?;
 				offset += amt;
-				let payload = buf[offset..offset + payload_len as usize].to_vec();
-				offset += payload_len as usize;
+				let data = buf[offset..offset + data_len as usize].to_vec();
+				offset += data_len as usize;
 				Ok((
 					Frame::Crypto {
 						offset: crypto_offset,
-						payload,
+						data,
 					},
 					offset,
 				))
@@ -216,15 +253,33 @@ impl Frame {
 				offset += blocks.encode(&mut buf[offset..])?;
 				Ok(offset)
 			}
+			Frame::Stream {
+				id,
+				offset: stream_offset,
+				data,
+				..
+			} => {
+				// 最後のフレームかどうかわからないので、とりあえず length をいれておく (TODO)
+				// See also: encode_type
+				offset += VariableLengthInteger::new(*id).encode(&mut buf[offset..])?;
+				offset += stream_offset.map_or(Ok(0), |o| {
+					VariableLengthInteger::new(o).encode(&mut buf[offset..])
+				})?;
+				let data_len = data.len();
+				offset += VariableLengthInteger::new(data_len as u64).encode(&mut buf[offset..])?;
+				buf[offset..offset + data_len].copy_from_slice(&data[..]);
+				offset += data_len;
+				Ok(offset)
+			}
 			Frame::Crypto {
 				offset: crypto_offset,
-				payload,
+				data,
 			} => {
 				offset += VariableLengthInteger::new(*crypto_offset).encode(&mut buf[offset..])?;
-				let payload_len = payload.len();
-				offset += VariableLengthInteger::new(payload_len as u64).encode(&mut buf[offset..])?;
-				buf[offset..offset + payload_len].copy_from_slice(&payload[..]);
-				offset += payload_len;
+				let data_len = data.len();
+				offset += VariableLengthInteger::new(data_len as u64).encode(&mut buf[offset..])?;
+				buf[offset..offset + data_len].copy_from_slice(&data[..]);
+				offset += data_len;
 				Ok(offset)
 			}
 		}
@@ -240,6 +295,16 @@ impl Frame {
 				buf[0] = 0x0d;
 				Ok(1)
 			}
+			Frame::Stream { offset, fin, .. } => {
+				// 最後のフレームかどうかわからないので、とりあえず LEN bit を立てておく (TODO)
+				// See also: encode
+				let n = 0b0001_0000
+					^ offset.map_or(0b0000_0000, |_| 0b0000_0100)
+					^ 0b0000_0010 // <- LEN bit
+					^ if *fin { 0b0000_0001 } else { 0b0000_0000 };
+				buf[0] = n;
+				Ok(1)
+			}
 			Frame::Crypto { .. } => {
 				buf[0] = 0x18;
 				Ok(1)
@@ -249,11 +314,7 @@ impl Frame {
 
 	pub fn size(&self) -> usize {
 		match self {
-			Frame::Crypto { offset, payload } => {
-				1 + VariableLengthInteger::new(*offset).size()
-					+ VariableLengthInteger::new(payload.len() as u64).size()
-					+ payload.len()
-			}
+			Frame::Padding => 1,
 			Frame::Ack {
 				largest,
 				delay,
@@ -263,7 +324,19 @@ impl Frame {
 					+ VariableLengthInteger::new(*delay).size()
 					+ blocks.size()
 			}
-			Frame::Padding => 1,
+			Frame::Stream {
+				id, offset, data, ..
+			} => {
+				1 + VariableLengthInteger::new(*id).size()
+					+ offset.map_or(0, |o| VariableLengthInteger::new(o).size())
+					+ VariableLengthInteger::new(data.len() as u64).size()
+					+ data.len()
+			}
+			Frame::Crypto { offset, data } => {
+				1 + VariableLengthInteger::new(*offset).size()
+					+ VariableLengthInteger::new(data.len() as u64).size()
+					+ data.len()
+			}
 		}
 	}
 }
@@ -701,6 +774,8 @@ impl Packet {
 			if !success {
 				return Err(Error::DecryptError);
 			}
+			use util;
+			util::print_hex("payload", &payload);
 			let payload = Payload::decode(&payload)?;
 
 			Ok((
