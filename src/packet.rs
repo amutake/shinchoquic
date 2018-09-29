@@ -153,6 +153,11 @@ pub enum Frame {
 		offset: u64,
 		data: Vec<u8>,
 	},
+	ConnectionClose {
+		error_code: u16, // TODO: enum
+		frame_type: u64, // ?
+		reason: Vec<u8>,
+	},
 	Ack {
 		largest: u64,
 		delay: u64,
@@ -172,6 +177,24 @@ impl Frame {
 		let mut offset = 1; // consume first byte
 		match buf[0] {
 			0x00 => Ok((Frame::Padding, offset)),
+			0x02 => {
+				let error_code = NetworkEndian::read_u16(&buf[offset..offset + 2]);
+				offset += 2;
+				let (frame_type, amt) = VariableLengthInteger::decode(&buf[offset..])?;
+				offset += amt;
+				let (reason_len, amt) = VariableLengthInteger::decode(&buf[offset..])?;
+				offset += amt;
+				let reason = buf[offset..offset + reason_len as usize].to_vec();
+				offset += reason_len as usize;
+				Ok((
+					Frame::ConnectionClose {
+						error_code,
+						frame_type,
+						reason,
+					},
+					offset,
+				))
+			}
 			0x0d => {
 				let (largest, amt) = VariableLengthInteger::decode(&buf[offset..])?;
 				offset += amt;
@@ -243,6 +266,20 @@ impl Frame {
 		offset += self.encode_type(buf)?;
 		match self {
 			Frame::Padding => Ok(offset),
+			Frame::ConnectionClose {
+				error_code,
+				frame_type,
+				reason,
+			} => {
+				NetworkEndian::write_u16(&mut buf[offset..offset + 2], *error_code);
+				offset += 2;
+				offset += VariableLengthInteger::new(*frame_type).encode(&mut buf[offset..])?;
+				let reason_len = reason.len();
+				offset += VariableLengthInteger::new(reason_len as u64).encode(&mut buf[offset..])?;
+				buf[offset..offset + reason_len].copy_from_slice(&reason[..]);
+				offset += reason_len;
+				Ok(offset)
+			}
 			Frame::Ack {
 				largest,
 				delay,
@@ -291,6 +328,10 @@ impl Frame {
 				buf[0] = 0x00;
 				Ok(1)
 			}
+			Frame::ConnectionClose { .. } => {
+				buf[0] = 0x02;
+				Ok(1)
+			}
 			Frame::Ack { .. } => {
 				buf[0] = 0x0d;
 				Ok(1)
@@ -315,6 +356,14 @@ impl Frame {
 	pub fn size(&self) -> usize {
 		match self {
 			Frame::Padding => 1,
+			Frame::ConnectionClose {
+				frame_type, reason, ..
+			} => {
+				1 + 2
+					+ VariableLengthInteger::new(*frame_type).size()
+					+ VariableLengthInteger::new(reason.len() as u64).size()
+					+ reason.len()
+			}
 			Frame::Ack {
 				largest,
 				delay,
@@ -408,7 +457,7 @@ pub enum Packet {
 		packet_number: PacketNumber,
 		payload: Payload,
 	},
-	ShortHeader {
+	Short {
 		dst_conn_id: ConnectionId,
 		packet_number: PacketNumber,
 		payload: Payload,
@@ -544,7 +593,7 @@ impl Packet {
 				//
 				Ok(offset)
 			}
-			Packet::ShortHeader {
+			Packet::Short {
 				dst_conn_id,
 				packet_number,
 				payload,
@@ -779,7 +828,7 @@ impl Packet {
 			let payload = Payload::decode(&payload)?;
 
 			Ok((
-				Packet::ShortHeader {
+				Packet::Short {
 					dst_conn_id,
 					packet_number,
 					payload,

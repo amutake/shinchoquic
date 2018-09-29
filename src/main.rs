@@ -257,7 +257,7 @@ fn main() {
     util::print_hex("CRYPTO", &crypto);
     let packet = packet::Packet::Handshake {
         version: 0xff00000e,
-        dst_conn_id,
+        dst_conn_id: dst_conn_id.clone(),
         src_conn_id,
         packet_number: pn_spaces.next_handshake(),
         payload: packet::Payload {
@@ -311,4 +311,49 @@ fn main() {
         packet::Packet::decode(&buf, &keys).expect("failed to decode server 1RTT packet");
     println!("server 1rtt: {:?}", server_1rtt);
     let buf = &buf[amt..];
+
+    // client 1RTT ACK
+    let packet = packet::Packet::Short {
+        dst_conn_id: dst_conn_id.clone(),
+        packet_number: pn_spaces.next_application(),
+        payload: packet::Payload {
+            frames: vec![packet::Frame::Ack {
+                largest: 0,
+                delay: 0,
+                blocks: AckBlocks {
+                    first: 0,
+                    additional: vec![],
+                },
+            }],
+        },
+    };
+    let mut buf = [0; 1500];
+    let amt = packet
+        .encode(&keys, &mut buf)
+        .expect("failed to encode client 1rtt ack packet");
+    let client_initial = &buf[..amt];
+    socket
+        .send_to(&client_initial, "127.0.0.1:4433")
+        .expect("failed to send client 1rtt ack packet");
+
+    // connection close
+    let packet = packet::Packet::Short {
+        dst_conn_id: dst_conn_id.clone(),
+        packet_number: pn_spaces.next_application(),
+        payload: packet::Payload {
+            frames: vec![packet::Frame::ConnectionClose {
+                error_code: 0,
+                frame_type: 0,
+                reason: vec![],
+            }],
+        },
+    };
+    let mut buf = [0; 1500];
+    let amt = packet
+        .encode(&keys, &mut buf)
+        .expect("failed to encode client 1rtt ack packet");
+    let client_initial = &buf[..amt];
+    socket
+        .send_to(&client_initial, "127.0.0.1:4433")
+        .expect("failed to send client 1rtt ack packet");
 }
