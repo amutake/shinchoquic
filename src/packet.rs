@@ -1,4 +1,5 @@
 use byteorder::{ByteOrder, NetworkEndian};
+use rand::{thread_rng, Rng};
 use rust_crypto::aead::{AeadDecryptor, AeadEncryptor};
 use rust_crypto::aes::{ctr as aes_ctr, KeySize};
 use rust_crypto::aes_gcm::AesGcm;
@@ -9,10 +10,16 @@ use util::{left_pad, xor};
 
 #[derive(Debug, Clone)]
 pub struct ConnectionId(Vec<u8>);
-
+const CONN_ID_LEN: usize = 18;
 impl ConnectionId {
 	pub fn new(id: Vec<u8>) -> Self {
 		ConnectionId(id)
+	}
+
+	pub fn random() -> Self {
+		let mut id = [0; CONN_ID_LEN];
+		thread_rng().fill(&mut id);
+		ConnectionId(id.to_vec())
 	}
 
 	pub fn decode(buf: &[u8]) -> Result<Self> {
