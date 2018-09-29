@@ -86,7 +86,6 @@ fn main() {
         .encode(&keys, &mut buf)
         .expect("failed to encode client initial packet");
     let client_initial = &buf[..amt];
-    util::print_hex("client initial", &client_initial);
     socket
         .send_to(&client_initial, "127.0.0.1:4433")
         .expect("failed to send client initial packet");
@@ -97,7 +96,6 @@ fn main() {
         .recv_from(&mut buf)
         .expect("failed to recv server Initial + Handshake packet");
     let buf = &buf[..amt];
-    util::print_hex("server initial", buf);
     let (server_initial, amt) =
         packet::Packet::decode(&buf, &keys).expect("failed to decode server Initial packet");
     println!("server initial: {:?}", server_initial);
@@ -148,7 +146,6 @@ fn main() {
         .recv_from(&mut buf)
         .expect("failed to recv server Handshake packet");
     let buf = &buf[..amt];
-    util::print_hex("server handshake", buf);
 
     let (server_handshake, amt) =
         packet::Packet::decode(&buf, &keys).expect("failed to decode server handshake packet");
@@ -175,7 +172,6 @@ fn main() {
         .recv_from(&mut buf)
         .expect("failed to recv server Handshake packet");
     let buf = &buf[..amt];
-    util::print_hex("server handshake", buf);
 
     let (server_handshake, amt) =
         packet::Packet::decode(&buf, &keys).expect("failed to decode server handshake packet");
@@ -202,7 +198,6 @@ fn main() {
         .recv_from(&mut buf)
         .expect("failed to recv server Handshake packet");
     let buf = &buf[..amt];
-    util::print_hex("server handshake", buf);
 
     let (server_handshake, amt) =
         packet::Packet::decode(&buf, &keys).expect("failed to decode server handshake packet");
@@ -222,6 +217,7 @@ fn main() {
     // HANDSHAKE FINISHED
     match session.get_1rtt_keys() {
         Some(one_rtt_keys) => {
+            util::print_hex("1rtt write key", &one_rtt_keys.write_key);
             keys.set_one_rtt(one_rtt_keys);
         }
         _ => panic!("failed to get handshake keys"),
@@ -290,4 +286,29 @@ fn main() {
     socket
         .send_to(&client_initial, "127.0.0.1:4433")
         .expect("failed to send client handshake packet");
+
+    // server ACK
+    let mut buf = [0; 1500];
+    let (amt, _) = socket
+        .recv_from(&mut buf)
+        .expect("failed to recv server Handshake packet");
+    let buf = &buf[..amt];
+
+    let (server_handshake, amt) =
+        packet::Packet::decode(&buf, &keys).expect("failed to decode server handshake packet");
+    println!("server handshake: {:?}", server_handshake);
+    let buf = &buf[amt..];
+
+    // server 1RTT APP DATA
+    let mut buf = [0; 1500];
+    let (amt, _) = socket
+        .recv_from(&mut buf)
+        .expect("failed to recv server 1RTT packet");
+    let buf = &buf[..amt];
+    util::print_hex("1rtt", &buf);
+
+    let (server_1rtt, amt) =
+        packet::Packet::decode(&buf, &keys).expect("failed to decode server 1RTT packet");
+    println!("server 1rtt: {:?}", server_1rtt);
+    let buf = &buf[amt..];
 }

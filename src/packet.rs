@@ -335,6 +335,11 @@ pub enum Packet {
 		packet_number: PacketNumber,
 		payload: Payload,
 	},
+	ShortHeader {
+		dst_conn_id: ConnectionId,
+		packet_number: PacketNumber,
+		payload: Payload,
+	},
 }
 impl Packet {
 	// 暗号化もやっちゃう
@@ -465,6 +470,47 @@ impl Packet {
 				offset += rest_len;
 				//
 				Ok(offset)
+			}
+			Packet::ShortHeader {
+				dst_conn_id,
+				packet_number,
+				payload,
+			} => {
+				let keys = keys.one_rtt.as_ref().ok_or(Error::NoKeyError)?;
+				let mut offset = 0;
+				// Flags
+				buf[0] = 0b0011_0000; // TODO: key phase bit
+				offset += 1;
+				// Destination Connection ID
+				offset += dst_conn_id.encode(&mut buf[offset..])?;
+				// Packet Number (not encrypted)
+				let pn_size = packet_number.encode(&mut buf[offset..])?;
+				// Payload (not encrypted)
+				let payload_size = payload.encode(&mut buf[offset + pn_size..])?;
+				// Payload Encryption
+				{
+					let aad = buf[..offset + pn_size].to_vec();
+					let nonce = xor(
+						&keys.write_iv,
+						&left_pad(&buf[offset..offset + pn_size], keys.write_iv.len()),
+					);
+
+					let mut cipher = AesGcm::new(KeySize::KeySize128, &keys.write_key, &nonce, &aad); // TODO: use negotiated ciphersuite
+					let mut payload = buf[offset + pn_size..offset + pn_size + payload_size].to_vec();
+					let (ciphertext, tag) = buf.split_at_mut(offset + pn_size + payload_size);
+					cipher.encrypt(
+						&payload,
+						&mut ciphertext[offset + pn_size..offset + pn_size + payload_size],
+						tag,
+					);
+				}
+				// Packet Number Encryption
+				let sample = buf[offset + 4..offset + 4 + PN_SAMPLE_LEN].to_vec();
+				let mut cipher = aes_ctr(KeySize::KeySize128, &keys.write_pn, &sample); // TODO: use negotiated ciphersuite
+				let mut pn = buf[offset..offset + pn_size].to_vec();
+				cipher.process(&pn, &mut buf[offset..offset + pn_size]);
+				//
+				Ok(offset + pn_size + payload_size + AUTH_TAG_LEN)
 			}
 		}
 	}
@@ -618,7 +664,53 @@ impl Packet {
 				Err(Error::NotSupportedError)
 			}
 		} else {
-			Err(Error::NotSupportedError)
+			// 1RTT (入力全体が1つのパケットと扱う)
+			let keys = keys.one_rtt.as_ref().ok_or(Error::NoKeyError)?;
+			// Flags
+			// ...omit
+			offset += 1;
+			// Destination Connection ID
+			let dst_conn_id = ConnectionId::decode(&buf[offset..offset + CONN_ID_LEN])?;
+			offset += CONN_ID_LEN;
+			// Packet Number
+			// 一旦4バイトで取得
+			let pn_offset = offset;
+			let mut pn = [0; 4];
+			let sample = &buf[offset + 4..offset + 4 + PN_SAMPLE_LEN];
+			let mut cipher = aes_ctr(KeySize::KeySize128, &keys.read_pn, &sample);
+			cipher.process(&buf[offset..offset + 4], &mut pn);
+			// 復号した4バイトから本当の桁数を取る
+			let (packet_number, amt) = PacketNumber::decode(&pn)?;
+			offset += amt;
+			// Payload
+			// 一旦もとのパケット番号まで読み込んでから、復号済みパケット番号に差し替える
+			let mut aad = buf[..offset].to_vec();
+			packet_number.encode(&mut aad[pn_offset..])?;
+			let nonce = xor(
+				&keys.read_iv,
+				&left_pad(&aad[pn_offset..], keys.read_iv.len()),
+			);
+			let packet_len = buf.len();
+			let mut cipher = AesGcm::new(KeySize::KeySize128, &keys.read_key, &nonce, &aad);
+			let mut payload = vec![0; packet_len - AUTH_TAG_LEN - offset];
+			let success = cipher.decrypt(
+				&buf[offset..packet_len - AUTH_TAG_LEN],
+				&mut payload,
+				&buf[packet_len - AUTH_TAG_LEN..],
+			);
+			if !success {
+				return Err(Error::DecryptError);
+			}
+			let payload = Payload::decode(&payload)?;
+
+			Ok((
+				Packet::ShortHeader {
+					dst_conn_id,
+					packet_number,
+					payload,
+				},
+				packet_len,
+			))
 		}
 	}
 }
