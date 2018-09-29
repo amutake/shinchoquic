@@ -33,10 +33,10 @@ fn main() {
     let mut config = ClientConfig::new();
     config.ciphersuites = vec![&TLS13_AES_128_GCM_SHA256];
     config.versions = vec![ProtocolVersion::TLSv1_3];
-    config
+    /* config
         .root_store
         .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-
+ */
     let config = Arc::new(config);
     // ngtcp2 のトランスポートパラメータを引っこ抜いてきた :innocent:
     let params = hex!("ff00000e003200030002001e0000000400040000000a000400040000000b0004000400000001000400100000000200020001000800020001").to_vec();
@@ -81,11 +81,11 @@ fn main() {
     let mut buf = [0; 1500];
     let (amt, _) = socket
         .recv_from(&mut buf)
-        .expect("failed to recv server initial + handshake packet");
+        .expect("failed to recv server Initial + Handshake packet");
     let buf = &buf[..amt];
     util::print_hex("server initial", buf);
     let (server_initial, amt) =
-        packet::Packet::decode(&buf, &keys).expect("failed to decode server initial packet");
+        packet::Packet::decode(&buf, &keys).expect("failed to decode server Initial packet");
     println!("server initial: {:?}", server_initial);
     let buf = &buf[amt..];
 
@@ -93,9 +93,9 @@ fn main() {
         packet::Packet::Initial { ref payload, .. } => match payload.frames.get(1) {
             // TODO: offset もちゃんと扱う
             Some(packet::Frame::Crypto { payload, .. }) => payload,
-            _ => panic!("server initial frame[1] must be a crypto frame"),
+            _ => panic!("server initial frame[1] must be a CRYPTO frame"),
         },
-        _ => panic!("first message from server must be an initial packet"),
+        _ => panic!("first packet from server must be an Initial packet"),
     };
     session.read_hs(&crypto).unwrap();
     match session.get_handshake_keys() {
@@ -105,7 +105,50 @@ fn main() {
         _ => panic!("failed to get handshake keys"),
     }
 
+    // server handshake
     let (server_handshake, amt) =
         packet::Packet::decode(&buf, &keys).expect("failed to decode server handshake packet");
     println!("server handshake: {:?}", server_handshake);
+    let buf = &buf[amt..];
+
+    let crypto = match server_handshake {
+        packet::Packet::Handshake { ref payload, .. } => match payload.frames.get(0) {
+            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            _ => panic!("server handshake frame[0] must be a CRYPTO frame"),
+        },
+        _ => panic!("second packet from server must be an Handshake packet"),
+    };
+    session.read_hs(&crypto).unwrap();
+
+    assert!(buf.is_empty());
+
+    // recv server handshake
+    let mut buf = [0; 1500];
+    let (amt, _) = socket
+        .recv_from(&mut buf)
+        .expect("failed to recv server Handshake packet");
+    let buf = &buf[..amt];
+    util::print_hex("server handshake", buf);
+
+    let (server_handshake, amt) =
+        packet::Packet::decode(&buf, &keys).expect("failed to decode server handshake packet");
+    println!("server handshake: {:?}", server_handshake);
+    let buf = &buf[amt..];
+
+    let crypto = match server_handshake {
+        packet::Packet::Handshake { ref payload, .. } => match payload.frames.get(0) {
+            Some(packet::Frame::Crypto { payload, .. }) => payload,
+            _ => panic!("server handshake frame[0] must be a CRYPTO frame"),
+        },
+        _ => panic!("second packet from server must be an Handshake packet"),
+    };
+    session.read_hs(&crypto).unwrap();
+
+    // crypto
+    let mut crypto = vec![];
+    session.write_hs(&mut crypto);
+    util::print_hex("TLS", &crypto);
+    let mut crypto = vec![];
+    session.write_hs(&mut crypto);
+    util::print_hex("TLS", &crypto);
 }

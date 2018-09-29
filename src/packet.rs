@@ -12,10 +12,6 @@ use util::{left_pad, xor};
 pub struct ConnectionId(Vec<u8>);
 const CONN_ID_LEN: usize = 18;
 impl ConnectionId {
-	pub fn new(id: Vec<u8>) -> Self {
-		ConnectionId(id)
-	}
-
 	pub fn random() -> Self {
 		let mut id = [0; CONN_ID_LEN];
 		thread_rng().fill(&mut id);
@@ -318,6 +314,13 @@ pub enum Packet {
 		packet_number: PacketNumber,
 		payload: Payload,
 	},
+	Handshake {
+		version: Version,
+		dst_conn_id: ConnectionId,
+		src_conn_id: ConnectionId,
+		packet_number: PacketNumber,
+		payload: Payload,
+	},
 }
 impl Packet {
 	// 暗号化もやっちゃう
@@ -378,6 +381,62 @@ impl Packet {
 				// Packet Number Encryption
 				let sample = buf[offset + 4..offset + 4 + PN_SAMPLE_LEN].to_vec();
 				let mut cipher = aes_ctr(KeySize::KeySize128, &keys.write_pn, &sample);
+				let mut pn = buf[offset..offset + pn_size].to_vec();
+				cipher.process(&pn, &mut buf[offset..offset + pn_size]);
+
+				offset += rest_len;
+				//
+				Ok(offset)
+			}
+			Packet::Handshake {
+				version,
+				dst_conn_id,
+				src_conn_id,
+				packet_number,
+				payload,
+			} => {
+				let keys = keys.handshake.as_ref().ok_or(Error::NoKeyError)?;
+				let mut offset = 0;
+				// Packet Type
+				buf[0] = 0xff; // long header & initial packet
+				offset += 1;
+				// Version
+				NetworkEndian::write_u32(&mut buf[offset..], *version);
+				offset += 4;
+				// DCIL & SCIL
+				buf[offset] = (dst_conn_id.cil() << 4) + src_conn_id.cil();
+				offset += 1;
+				// Destination Connection ID
+				offset += dst_conn_id.encode(&mut buf[offset..])?;
+				// Source Connection ID
+				offset += src_conn_id.encode(&mut buf[offset..])?;
+				// Length
+				let rest_len = packet_number.size() + payload.size_with_padding() + AUTH_TAG_LEN;
+				offset += VariableLengthInteger::new(rest_len as u64).encode(&mut buf[offset..])?;
+				// Packet Number (not encrypted)
+				let pn_size = packet_number.encode(&mut buf[offset..])?;
+				// Payload (not encrypted)
+				let payload_size = payload.encode_with_padding(&mut buf[offset + pn_size..])?;
+				// Payload Encryption
+				{
+					let aad = buf[..offset + pn_size].to_vec();
+					let nonce = xor(
+						&keys.write_iv,
+						&left_pad(&buf[offset..offset + pn_size], keys.write_iv.len()),
+					);
+
+					let mut cipher = AesGcm::new(KeySize::KeySize128, &keys.write_key, &nonce, &aad); // TODO: use negotiated ciphersuite
+					let mut payload = buf[offset + pn_size..offset + pn_size + payload_size].to_vec();
+					let (ciphertext, tag) = buf.split_at_mut(offset + pn_size + payload_size);
+					cipher.encrypt(
+						&payload,
+						&mut ciphertext[offset + pn_size..offset + pn_size + payload_size],
+						tag,
+					);
+				}
+				// Packet Number Encryption
+				let sample = buf[offset + 4..offset + 4 + PN_SAMPLE_LEN].to_vec();
+				let mut cipher = aes_ctr(KeySize::KeySize128, &keys.write_pn, &sample); // TODO: use negotiated ciphersuite
 				let mut pn = buf[offset..offset + pn_size].to_vec();
 				cipher.process(&pn, &mut buf[offset..offset + pn_size]);
 
@@ -461,6 +520,73 @@ impl Packet {
 						dst_conn_id,
 						src_conn_id,
 						token,
+						packet_number,
+						payload,
+					},
+					offset,
+				))
+			} else if buf[0] & 0b0111_1111 == 0x7d {
+				// Handshake
+				offset += 1;
+				let keys = keys.handshake.as_ref().ok_or(Error::NoKeyError)?;
+				// Version
+				let version = NetworkEndian::read_u32(&buf[offset..offset + 4]);
+				offset += 4;
+				// DCIL & SCIL
+				let mut scil = (buf[offset] >> 4) as usize;
+				if scil > 0 {
+					scil += 3
+				};
+				let mut dcil = (buf[offset] & 0b0000_1111) as usize;
+				if dcil > 0 {
+					dcil += 3
+				};
+				offset += 1;
+				// Destination Connection ID
+				let dst_conn_id = ConnectionId::decode(&buf[offset..offset + dcil])?;
+				offset += dcil;
+				// Source Connection ID
+				let src_conn_id = ConnectionId::decode(&buf[offset..offset + scil])?;
+				offset += scil;
+				// Length
+				let (length, amt) = VariableLengthInteger::decode(&buf[offset..])?;
+				offset += amt;
+				// Packet Number
+				// 一旦4バイトで取得
+				let pn_offset = offset;
+				let mut pn = [0; 4];
+				let sample = &buf[offset + 4..offset + 4 + PN_SAMPLE_LEN];
+				let mut cipher = aes_ctr(KeySize::KeySize128, &keys.read_pn, &sample);
+				cipher.process(&buf[offset..offset + 4], &mut pn);
+				// 復号した4バイトから本当の桁数を取る
+				let (packet_number, amt) = PacketNumber::decode(&pn)?;
+				offset += amt;
+				// Payload
+				// 一旦もとのパケット番号まで読み込んでから、復号済みパケット番号に差し替える
+				let mut aad = buf[..offset].to_vec();
+				packet_number.encode(&mut aad[pn_offset..])?;
+				let nonce = xor(
+					&keys.read_iv,
+					&left_pad(&aad[pn_offset..], keys.read_iv.len()),
+				);
+				let mut cipher = AesGcm::new(KeySize::KeySize128, &keys.read_key, &nonce, &aad);
+				let mut payload = vec![0; pn_offset + length as usize - AUTH_TAG_LEN - offset];
+				let success = cipher.decrypt(
+					&buf[offset..pn_offset + length as usize - AUTH_TAG_LEN],
+					&mut payload,
+					&buf[pn_offset + length as usize - AUTH_TAG_LEN..pn_offset + length as usize],
+				);
+				if !success {
+					return Err(Error::DecryptError);
+				}
+				let payload = Payload::decode(&payload)?;
+				offset = pn_offset + length as usize;
+
+				Ok((
+					Packet::Handshake {
+						version,
+						dst_conn_id,
+						src_conn_id,
 						packet_number,
 						payload,
 					},
